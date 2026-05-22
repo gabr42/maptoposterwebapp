@@ -545,6 +545,32 @@ def _fetch_wetlands(
         return None
 
 
+def _drop_landuse_features(
+    features: Optional[GeoDataFrame],
+) -> Optional[GeoDataFrame]:
+    """Drop features that also carry a ``landuse=*`` tag.
+
+    OSM occasionally tags a land-use area (brownfield, residential,
+    industrial, etc.) with ``historic`` or a religious building value — e.g.
+    a former factory site marked ``historic=ruins`` + ``landuse=brownfield``.
+    These would render as misleading "ghost building" footprints, typically
+    much larger than any real structure on the site. Dropping anything with
+    a ``landuse`` tag keeps the landmark layer to genuine standing structures.
+
+    Returns the input unchanged when there is no ``landuse`` column. Returns
+    None when filtering removes every row, matching the no-features pathway
+    used elsewhere in the pipeline.
+    """
+    if features is None or features.empty:
+        return features
+    if "landuse" not in features.columns:
+        return features
+    kept = features[features["landuse"].isna()]
+    if kept.empty:
+        return None
+    return kept
+
+
 def _fetch_religious(
     point: tuple[float, float],
     dist: float,
@@ -557,6 +583,9 @@ def _fetch_religious(
     functional ``amenity=place_of_worship`` tag, which OSMnx OR's into a
     single query.
 
+    Features that also carry a ``landuse=*`` tag are dropped — see
+    ``_drop_landuse_features`` for the rationale.
+
     Returns None on any error; the caller renders without religious sites in
     that case, so this is logged at warning rather than error level. Returns
     None silently (debug log) when no religious buildings exist in the
@@ -567,7 +596,7 @@ def _fetch_religious(
         dist: Distance in meters from center point
     """
     try:
-        return ox.features_from_point(
+        features = ox.features_from_point(
             point,
             tags={
                 "building": [
@@ -584,6 +613,7 @@ def _fetch_religious(
     except Exception as e:
         logger.warning("OSMnx error while fetching religious buildings: %s", e)
         return None
+    return _drop_landuse_features(features)
 
 
 def _fetch_historic(
@@ -596,6 +626,9 @@ def _fetch_historic(
     The result may include points (statues, memorials without footprints),
     lines, and polygons; the render step filters to Polygon/MultiPolygon.
 
+    Features that also carry a ``landuse=*`` tag are dropped — see
+    ``_drop_landuse_features`` for the rationale.
+
     Returns None on any error; logged at warning level (debug for the
     expected ``InsufficientResponseError`` no-features case).
 
@@ -604,7 +637,7 @@ def _fetch_historic(
         dist: Distance in meters from center point
     """
     try:
-        return ox.features_from_point(
+        features = ox.features_from_point(
             point, tags={"historic": True}, dist=dist,
         )
     except InsufficientResponseError:
@@ -613,6 +646,7 @@ def _fetch_historic(
     except Exception as e:
         logger.warning("OSMnx error while fetching historic features: %s", e)
         return None
+    return _drop_landuse_features(features)
 
 
 def organize_svg_layers(svg_path: str) -> None:

@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Useful for precise location control
 
 ### Fixed
+- **Historic/religious layer "ghost buildings"** - `--show-historic` and `--show-religious` now drop features that also carry a `landuse=*` tag. OSM occasionally tags a land-use area (e.g. a former factory site marked `historic=ruins` + `landuse=brownfield`) with a historic or religious value; without this filter, the entire land area rendered as a misleading building footprint.
 - **Z-order bug** - Roads now render above parks and water features (fixes [#39](https://github.com/originalankur/maptoposter/issues/39), relates to [PR #42](https://github.com/originalankur/maptoposter/pull/42))
   - Water layer: `zorder=1` → `zorder=0.5`
   - Parks layer: `zorder=2` → `zorder=0.8`
