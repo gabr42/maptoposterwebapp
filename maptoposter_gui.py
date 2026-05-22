@@ -89,7 +89,7 @@ class ModernMapPosterGUI(ctk.CTk):
     def _load_settings(self) -> dict:
         """Load GUI settings from file."""
         default_settings: dict = {
-            "recent_cities": [],
+            "recent_locations": [],
             "favorite_themes": [],
             "presets": {},
             "last_used": {}
@@ -97,10 +97,31 @@ class ModernMapPosterGUI(ctk.CTk):
         if self.settings_file.exists():
             try:
                 with open(self.settings_file, 'r') as f:
-                    return json.load(f)
+                    loaded = json.load(f)
             except (json.JSONDecodeError, OSError):
                 return default_settings
+            # Migrate legacy recent_cities (list of "City, Country" strings)
+            # to recent_locations (list of full snapshot dicts).
+            if "recent_cities" in loaded and "recent_locations" not in loaded:
+                loaded["recent_locations"] = [
+                    self._recent_entry_from_legacy_string(s)
+                    for s in loaded.pop("recent_cities")
+                    if isinstance(s, str) and ", " in s
+                ]
+            loaded.setdefault("recent_locations", [])
+            return loaded
         return default_settings
+
+    @staticmethod
+    def _recent_entry_from_legacy_string(s: str) -> dict:
+        """Convert a legacy 'City, Country' string into a full Recent entry."""
+        city, _, country = s.partition(", ")
+        return {
+            "mode": "city",
+            "city": city, "country": country,
+            "latitude": "", "longitude": "",
+            "city_override": "", "country_override": "",
+        }
 
     def _save_settings(self) -> None:
         """Save GUI settings to file."""
@@ -202,33 +223,72 @@ class ModernMapPosterGUI(ctk.CTk):
             "show_historic": self.historic_sw.get(),
         }
 
-    def add_recent_city(self, city: str, country: str) -> None:
-        """Add city to recent list."""
-        location = f"{city}, {country}"
-        if location in self.settings["recent_cities"]:
-            self.settings["recent_cities"].remove(location)
-        self.settings["recent_cities"].insert(0, location)
-        self.settings["recent_cities"] = self.settings["recent_cities"][:5]
+    def _collect_recent_entry(self) -> dict:
+        """Snapshot the current location inputs for the Recent dropdown."""
+        return {
+            "mode": self.location_mode.get(),
+            "city": self.city_entry.get().strip(),
+            "country": self.country_entry.get().strip(),
+            "latitude": self.lat_entry.get().strip(),
+            "longitude": self.lon_entry.get().strip(),
+            "city_override": self.city_override_entry.get().strip(),
+            "country_override": self.country_override_entry.get().strip(),
+        }
+
+    @staticmethod
+    def _recent_label(entry: dict) -> str:
+        """Human-readable label for a Recent entry."""
+        if entry.get("mode") == "coords":
+            coords = f"{entry.get('latitude', '')}, {entry.get('longitude', '')}"
+            co_city = entry.get("city_override", "")
+            co_country = entry.get("country_override", "")
+            if co_city and co_country:
+                return f"{co_city}, {co_country} ({coords})"
+            return coords
+        return f"{entry.get('city', '')}, {entry.get('country', '')}"
+
+    def add_recent_location(self, entry: dict) -> None:
+        """Add a full location snapshot to the Recent dropdown."""
+        locations = self.settings["recent_locations"]
+        if entry in locations:
+            locations.remove(entry)
+        locations.insert(0, entry)
+        self.settings["recent_locations"] = locations[:5]
         self._save_settings()
-        self.update_recent_cities_menu()
+        self.update_recent_locations_menu()
 
-    def update_recent_cities_menu(self) -> None:
-        """Update the recent cities dropdown."""
+    def update_recent_locations_menu(self) -> None:
+        """Update the Recent dropdown values from saved entries."""
         if hasattr(self, 'recent_menu'):
-            recent_list = self.settings["recent_cities"] if self.settings["recent_cities"] else ["No recent cities"]
-            self.recent_menu.configure(values=recent_list)
-            if recent_list[0] != "No recent cities":
-                self.recent_menu.set(recent_list[0])
+            entries = self.settings["recent_locations"]
+            labels = [self._recent_label(e) for e in entries] if entries else ["No recent locations"]
+            self.recent_menu.configure(values=labels)
+            if labels[0] != "No recent locations":
+                self.recent_menu.set(labels[0])
 
-    def load_recent_city(self, choice: str) -> None:
-        """Load a recent city into the form."""
-        if choice and choice != "No recent cities":
-            parts = choice.split(", ")
-            if len(parts) == 2:
-                self.city_entry.delete(0, "end")
-                self.city_entry.insert(0, parts[0])
-                self.country_entry.delete(0, "end")
-                self.country_entry.insert(0, parts[1])
+    def load_recent_location(self, label: str) -> None:
+        """Restore mode and all location fields from a Recent entry."""
+        if not label or label == "No recent locations":
+            return
+        for entry in self.settings["recent_locations"]:
+            if self._recent_label(entry) == label:
+                self._apply_recent_entry(entry)
+                return
+
+    def _apply_recent_entry(self, entry: dict) -> None:
+        """Apply a Recent entry to the form (mode + all six location fields)."""
+        self.location_mode.set(entry.get("mode", "city"))
+        self.toggle_location_mode()
+        for widget, key in [
+            (self.city_entry, "city"),
+            (self.country_entry, "country"),
+            (self.lat_entry, "latitude"),
+            (self.lon_entry, "longitude"),
+            (self.city_override_entry, "city_override"),
+            (self.country_override_entry, "country_override"),
+        ]:
+            widget.delete(0, "end")
+            widget.insert(0, entry.get(key, ""))
 
     def toggle_favorite_theme(self) -> None:
         """Add/remove current theme from favorites."""
@@ -386,10 +446,10 @@ class ModernMapPosterGUI(ctk.CTk):
         ctk.CTkLabel(col1, text="Recent:", anchor="w", font=ctk.CTkFont(size=10),
                     text_color="gray50").pack(fill="x", padx=15, pady=(0, 5))
         self.recent_menu = ctk.CTkOptionMenu(
-            col1, values=["No recent cities"], command=self.load_recent_city
+            col1, values=["No recent locations"], command=self.load_recent_location
         )
         self.recent_menu.pack(fill="x", padx=15, pady=(0, 12))
-        self.update_recent_cities_menu()
+        self.update_recent_locations_menu()
 
         self.location_mode = ctk.StringVar(value="city")
         mode_frame = ctk.CTkFrame(col1, fg_color="gray15")
@@ -1045,9 +1105,9 @@ class ModernMapPosterGUI(ctk.CTk):
         # Log header
         if mode == "city":
             location_str = f"{params['city']}, {params['country']}"
-            self.add_recent_city(params["city"], params["country"])
         else:
             location_str = f"{params.get('latitude', '?')}, {params.get('longitude', '?')}"
+        self.add_recent_location(self._collect_recent_entry())
 
         self.log_box.delete("1.0", "end")
         self.log_box.insert("end", f"Initializing: {location_str}\n")
