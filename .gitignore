@@ -3,6 +3,7 @@ posters/
 backup/
 .claude/
 fonts/cache/
+preview_cache/
 
 # Virtual environments
 env/
